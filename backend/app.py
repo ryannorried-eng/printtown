@@ -2,7 +2,7 @@ from flask import Flask
 
 from config import Config
 from models import db
-from routes import system_bp
+from routes import picks_bp, system_bp
 
 
 def create_app() -> Flask:
@@ -15,6 +15,7 @@ def create_app() -> Flask:
         db.create_all()
 
     app.register_blueprint(system_bp)
+    app.register_blueprint(picks_bp)
 
     return app
 
