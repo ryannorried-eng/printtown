@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
+from config import Config
 from models import Game, OddsSnapshot, Pick
 from services.math_engine import (
     american_to_decimal,
@@ -18,6 +19,10 @@ SPORT_KEY = "basketball_ncaab"
 MIN_EV_PERCENT = 1.0
 KELLY_FRACTION = 0.25
 KELLY_QUARTER_CAP = 0.05
+MIN_BOOKS = int(getattr(Config, "MIN_BOOKS", 2))
+MAX_ML_PLUS = int(getattr(Config, "MAX_ML_PLUS", 800))
+LONGSHOT_MIN_CONS_P = float(getattr(Config, "LONGSHOT_MIN_CONS_P", 0.2))
+LONGSHOT_MIN_BOOKS = int(getattr(Config, "LONGSHOT_MIN_BOOKS", 6))
 
 
 def _normalize_point(value: float | None) -> float | None:
@@ -138,13 +143,22 @@ def generate_picks() -> dict[str, int]:
             KELLY_QUARTER_CAP,
         )
 
+        outcome_lines = consensus_inputs.get(market_key, {}).get(outcome_key, [])
+        book_count = len(outcome_lines)
+
+        if book_count < MIN_BOOKS:
+            continue
+
+        if row.market_type == "h2h" and offered_odds >= MAX_ML_PLUS:
+            if book_count < LONGSHOT_MIN_BOOKS or consensus_prob < LONGSHOT_MIN_CONS_P:
+                continue
+
         if ev_percent < MIN_EV_PERCENT:
             continue
 
-        outcome_lines = consensus_inputs.get(market_key, {}).get(outcome_key, [])
-        book_count = len(outcome_lines)
         sharp_present = any("pinnacle" in x["sportsbook"].lower() for x in outcome_lines)
-        signal_score = _compute_signal_score(ev_percent, book_count, sharp_present)
+        effective_ev = min(ev_percent, 8.0)
+        signal_score = _compute_signal_score(effective_ev, book_count, sharp_present)
 
         game = row.game
         passed_filter_rows.append(
