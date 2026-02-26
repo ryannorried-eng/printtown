@@ -1,3 +1,4 @@
+from routes.board import bp as board_bp
 from flask import Flask
 
 from config import Config
@@ -16,6 +17,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(system_bp)
     app.register_blueprint(picks_bp)
+app.register_blueprint(board_bp)
 
     return app
 
