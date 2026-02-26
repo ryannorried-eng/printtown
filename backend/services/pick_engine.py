@@ -31,11 +31,12 @@ def _normalize_point(value: float | None) -> float | None:
     return round(float(value), 3)
 
 
-def _outcome_key(outcome_name: str, outcome_point: float | None) -> str:
-    point = _normalize_point(outcome_point)
-    if point is None:
-        return outcome_name
-    return f"{outcome_name}::{point}"
+def _normalize_outcome_name(value: str) -> str:
+    return value.strip().lower()
+
+
+def _outcome_key(outcome_name: str, outcome_point: float | None) -> tuple[str, float | None]:
+    return (_normalize_outcome_name(outcome_name), _normalize_point(outcome_point))
 
 
 def _compute_signal_score(ev_percent: float, book_count: int, sharp_present: bool) -> float:
@@ -45,7 +46,7 @@ def _compute_signal_score(ev_percent: float, book_count: int, sharp_present: boo
     return round(min(100.0, ev_component + book_bonus + sharp_bonus), 1)
 
 
-def generate_picks() -> dict[str, int]:
+def generate_picks() -> dict[str, Any]:
     latest_fetched_at = (
         OddsSnapshot.query.filter(OddsSnapshot.market_type.in_(["h2h", "spreads", "totals"]))
         .with_entities(OddsSnapshot.fetched_at)
@@ -60,6 +61,7 @@ def generate_picks() -> dict[str, int]:
             "passed_filter": 0,
             "deduped_kept": 0,
             "upserted": 0,
+            "kept_by_market": {"h2h": 0, "spreads": 0, "totals": 0},
         }
 
     rows = (
@@ -76,7 +78,9 @@ def generate_picks() -> dict[str, int]:
     for row in rows:
         market_book_groups[(row.game_id, row.market_type, row.bookmaker)].append(row)
 
-    consensus_inputs: dict[tuple[int, str], dict[str, list[dict[str, Any]]]] = defaultdict(
+    consensus_inputs: dict[
+        tuple[int, str], dict[tuple[str, float | None], list[dict[str, Any]]]
+    ] = defaultdict(
         lambda: defaultdict(list)
     )
 
@@ -109,7 +113,7 @@ def generate_picks() -> dict[str, int]:
                 }
             )
 
-    consensus_by_market: dict[tuple[int, str], dict[str, float]] = {}
+    consensus_by_market: dict[tuple[int, str], dict[tuple[str, float | None], float]] = {}
     for market_key, by_outcome in consensus_inputs.items():
         consensus_by_market[market_key] = {}
         for outcome_key, lines in by_outcome.items():
@@ -219,9 +223,16 @@ def generate_picks() -> dict[str, int]:
 
     Pick.query.session.commit()
 
+    kept_by_market = {"h2h": 0, "spreads": 0, "totals": 0}
+
+    for row in deduped.values():
+        if row["market_type"] in kept_by_market:
+            kept_by_market[row["market_type"]] += 1
+
     return {
         "total_candidates": total_candidates,
         "passed_filter": len(passed_filter_rows),
         "deduped_kept": len(deduped),
         "upserted": upserted,
+        "kept_by_market": kept_by_market,
     }
