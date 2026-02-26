@@ -1,3 +1,3 @@
-from .db_models import Game, OddsSnapshot, db
+from .db_models import Game, OddsSnapshot, Pick, db
 
-__all__ = ["db", "Game", "OddsSnapshot"]
+__all__ = ["db", "Game", "OddsSnapshot", "Pick"]

@@ -3,6 +3,7 @@ from sqlalchemy import text
 
 from models import OddsSnapshot, db
 from services.odds_service import fetch_and_store_all
+from services.pick_engine import generate_picks
 
 system_bp = Blueprint("system", __name__)
 
@@ -29,5 +30,6 @@ def health_check():
 
 @system_bp.post("/api/v1/refresh")
 def refresh_odds():
-    result = fetch_and_store_all()
-    return jsonify({"status": "ok", "result": result})
+    odds_result = fetch_and_store_all()
+    picks_result = generate_picks()
+    return jsonify({"status": "ok", "odds": odds_result, "picks": picks_result})
