@@ -21,6 +21,8 @@ MIN_EV_PERCENT = 1.0
 KELLY_FRACTION = 0.25
 KELLY_QUARTER_CAP = 0.05
 MIN_BOOKS = int(getattr(Config, "MIN_BOOKS", 2))
+MIN_BOOKS_TOTALS = int(os.getenv("MIN_BOOKS_TOTALS", "3"))
+MIN_EV_PERCENT_TOTALS = float(os.getenv("MIN_EV_PERCENT_TOTALS", "0.5"))
 MAX_ML_PLUS = int(getattr(Config, "MAX_ML_PLUS", 800))
 LONGSHOT_MIN_CONS_P = float(getattr(Config, "LONGSHOT_MIN_CONS_P", 0.2))
 LONGSHOT_MIN_BOOKS = int(getattr(Config, "LONGSHOT_MIN_BOOKS", 6))
@@ -217,7 +219,10 @@ def generate_picks() -> dict[str, Any]:
             KELLY_QUARTER_CAP,
         )
 
-        if book_count < MIN_BOOKS:
+        min_books = MIN_BOOKS_TOTALS if row.market_type == "totals" else MIN_BOOKS
+        min_ev_percent = MIN_EV_PERCENT_TOTALS if row.market_type == "totals" else MIN_EV_PERCENT
+
+        if book_count < min_books:
             debug_rejects["min_books"] += 1
             continue
 
@@ -226,7 +231,7 @@ def generate_picks() -> dict[str, Any]:
                 debug_rejects["longshot_guard"] += 1
                 continue
 
-        if ev_percent < MIN_EV_PERCENT:
+        if ev_percent < min_ev_percent:
             debug_rejects["min_ev"] += 1
             continue
 
