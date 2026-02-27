@@ -47,6 +47,15 @@ def _compute_signal_score(ev_percent: float, book_count: int, sharp_present: boo
 
 
 def generate_picks() -> dict[str, Any]:
+    debug_rejects = {
+        "no_consensus": 0,
+        "min_books": 0,
+        "longshot_guard": 0,
+        "min_ev": 0,
+        "other": 0,
+    }
+    debug_samples: list[dict[str, Any]] = []
+
     latest_fetched_at = (
         OddsSnapshot.query.filter(OddsSnapshot.market_type.in_(["h2h", "spreads", "totals"]))
         .with_entities(OddsSnapshot.fetched_at)
@@ -62,6 +71,8 @@ def generate_picks() -> dict[str, Any]:
             "deduped_kept": 0,
             "upserted": 0,
             "kept_by_market": {"h2h": 0, "spreads": 0, "totals": 0},
+            "debug_rejects": debug_rejects,
+            "debug_samples": debug_samples,
         }
 
     rows = (
@@ -134,11 +145,29 @@ def generate_picks() -> dict[str, Any]:
         outcome_key = _outcome_key(row.outcome_name, row.outcome_point)
         market_key = (row.game_id, row.market_type)
         consensus_prob = consensus_by_market.get(market_key, {}).get(outcome_key)
+        offered_odds = int(row.outcome_price)
+        outcome_lines = consensus_inputs.get(market_key, {}).get(outcome_key, [])
+        book_count = len(outcome_lines)
+        ev_percent = calculate_ev_percent(consensus_prob, offered_odds) if consensus_prob is not None else None
+
+        if len(debug_samples) < 10:
+            debug_samples.append(
+                {
+                    "market_type": row.market_type,
+                    "outcome_name": row.outcome_name,
+                    "point": _normalize_point(row.outcome_point),
+                    "offered_odds": offered_odds,
+                    "consensus_prob": consensus_prob,
+                    "ev_percent": ev_percent,
+                    "book_count": book_count,
+                }
+            )
+
         if consensus_prob is None:
+            debug_rejects["no_consensus"] += 1
             continue
 
         total_candidates += 1
-        offered_odds = int(row.outcome_price)
         offered_decimal = american_to_decimal(offered_odds)
         ev_percent = calculate_ev_percent(consensus_prob, offered_odds)
         full_kelly = kelly_criterion(consensus_prob, offered_odds)
@@ -147,17 +176,17 @@ def generate_picks() -> dict[str, Any]:
             KELLY_QUARTER_CAP,
         )
 
-        outcome_lines = consensus_inputs.get(market_key, {}).get(outcome_key, [])
-        book_count = len(outcome_lines)
-
         if book_count < MIN_BOOKS:
+            debug_rejects["min_books"] += 1
             continue
 
         if row.market_type == "h2h" and offered_odds >= MAX_ML_PLUS:
             if book_count < LONGSHOT_MIN_BOOKS or consensus_prob < LONGSHOT_MIN_CONS_P:
+                debug_rejects["longshot_guard"] += 1
                 continue
 
         if ev_percent < MIN_EV_PERCENT:
+            debug_rejects["min_ev"] += 1
             continue
 
         sharp_present = any("pinnacle" in x["sportsbook"].lower() for x in outcome_lines)
@@ -235,4 +264,6 @@ def generate_picks() -> dict[str, Any]:
         "deduped_kept": len(deduped),
         "upserted": upserted,
         "kept_by_market": kept_by_market,
+        "debug_rejects": debug_rejects,
+        "debug_samples": debug_samples,
     }
