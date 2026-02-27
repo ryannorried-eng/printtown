@@ -41,6 +41,12 @@ def _outcome_key(outcome_name: str, outcome_point: float | None) -> tuple[str, f
     return (_normalize_outcome_name(outcome_name), _normalize_point(outcome_point))
 
 
+def _consensus_group_point(row: OddsSnapshot) -> float | None:
+    if row.market_type in {"spreads", "totals"}:
+        return _normalize_point(row.outcome_point)
+    return None
+
+
 def _compute_signal_score(ev_percent: float, book_count: int, sharp_present: bool) -> float:
     ev_component = min(max(ev_percent, 0.0), 20.0) * 4.0
     book_bonus = min(book_count, 10) * 1.5
@@ -73,6 +79,14 @@ def generate_picks() -> dict[str, Any]:
             "deduped_kept": 0,
             "upserted": 0,
             "kept_by_market": {"h2h": 0, "spreads": 0, "totals": 0},
+            "debug_counts": {
+                "rows_in_window": 0,
+                "by_book_groups": 0,
+                "devigged_groups": 0,
+                "consensus_markets": 0,
+                "consensus_outcomes": 0,
+                "offered_lines": 0,
+            },
             "debug_rejects": debug_rejects,
             "debug_samples": debug_samples,
         }
@@ -98,9 +112,11 @@ def generate_picks() -> dict[str, Any]:
         for row in rows
     ]
 
-    market_book_groups: dict[tuple[int, str, str], list[OddsSnapshot]] = defaultdict(list)
+    market_book_groups: dict[tuple[int, str, str, datetime, float | None], list[OddsSnapshot]] = defaultdict(list)
     for row in rows:
-        market_book_groups[(row.game_id, row.market_type, row.bookmaker)].append(row)
+        market_book_groups[
+            (row.game_id, row.market_type, row.bookmaker, row.fetched_at, _consensus_group_point(row))
+        ].append(row)
 
     consensus_inputs: dict[
         tuple[int, str], dict[tuple[str, float | None], list[dict[str, Any]]]
@@ -108,7 +124,8 @@ def generate_picks() -> dict[str, Any]:
         lambda: defaultdict(list)
     )
 
-    for (game_id, market_type, sportsbook), outcomes in market_book_groups.items():
+    devigged_groups = 0
+    for (game_id, market_type, sportsbook, _fetched_at, _group_point), outcomes in market_book_groups.items():
         if len(outcomes) < 2:
             continue
         devig_payload: list[dict[str, Any]] = []
@@ -128,6 +145,7 @@ def generate_picks() -> dict[str, Any]:
             devigged = remove_vig_multiplicative(devig_payload)
         except ValueError:
             continue
+        devigged_groups += 1
         for entry in devigged:
             key = _outcome_key(entry["name"], entry.get("point"))
             consensus_inputs[(game_id, market_type)][key].append(
@@ -147,6 +165,15 @@ def generate_picks() -> dict[str, Any]:
                 consensus_by_market[market_key][outcome_key] = build_consensus(lines)
             except ValueError:
                 continue
+
+    debug_counts = {
+        "rows_in_window": len(rows),
+        "by_book_groups": len(market_book_groups),
+        "devigged_groups": devigged_groups,
+        "consensus_markets": len(consensus_by_market),
+        "consensus_outcomes": sum(len(v) for v in consensus_by_market.values()),
+        "offered_lines": len(offered),
+    }
 
     total_candidates = 0
     passed_filter_rows: list[dict[str, Any]] = []
@@ -278,6 +305,7 @@ def generate_picks() -> dict[str, Any]:
         "deduped_kept": len(deduped),
         "upserted": upserted,
         "kept_by_market": kept_by_market,
+        "debug_counts": debug_counts,
         "debug_rejects": debug_rejects,
         "debug_samples": debug_samples,
     }
