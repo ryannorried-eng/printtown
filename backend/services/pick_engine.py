@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from config import Config
@@ -23,6 +24,7 @@ MIN_BOOKS = int(getattr(Config, "MIN_BOOKS", 2))
 MAX_ML_PLUS = int(getattr(Config, "MAX_ML_PLUS", 800))
 LONGSHOT_MIN_CONS_P = float(getattr(Config, "LONGSHOT_MIN_CONS_P", 0.2))
 LONGSHOT_MIN_BOOKS = int(getattr(Config, "LONGSHOT_MIN_BOOKS", 6))
+SNAPSHOT_WINDOW_SECONDS = int(os.getenv("SNAPSHOT_WINDOW_SECONDS", "180"))
 
 
 def _normalize_point(value: float | None) -> float | None:
@@ -78,12 +80,23 @@ def generate_picks() -> dict[str, Any]:
     rows = (
         OddsSnapshot.query.join(Game, Game.id == OddsSnapshot.game_id)
         .filter(
-            OddsSnapshot.fetched_at == latest_fetched_at,
+            OddsSnapshot.fetched_at >= (latest_fetched_at - timedelta(seconds=SNAPSHOT_WINDOW_SECONDS)),
             Game.sport_key == SPORT_KEY,
             OddsSnapshot.market_type.in_(["h2h", "spreads", "totals"]),
         )
         .all()
     )
+
+    offered = [
+        {
+            "snapshot": row,
+            "market_key": (row.game_id, row.market_type),
+            "outcome_key": _outcome_key(row.outcome_name, row.outcome_point)
+            if row.outcome_name is not None
+            else None,
+        }
+        for row in rows
+    ]
 
     market_book_groups: dict[tuple[int, str, str], list[OddsSnapshot]] = defaultdict(list)
     for row in rows:
@@ -138,12 +151,13 @@ def generate_picks() -> dict[str, Any]:
     total_candidates = 0
     passed_filter_rows: list[dict[str, Any]] = []
 
-    for row in rows:
-        if row.outcome_name is None or row.outcome_price in (None, 0):
+    for offer in offered:
+        row = offer["snapshot"]
+        if offer["outcome_key"] is None or row.outcome_price in (None, 0):
             continue
 
-        outcome_key = _outcome_key(row.outcome_name, row.outcome_point)
-        market_key = (row.game_id, row.market_type)
+        outcome_key = offer["outcome_key"]
+        market_key = offer["market_key"]
         consensus_prob = consensus_by_market.get(market_key, {}).get(outcome_key)
         offered_odds = int(row.outcome_price)
         outcome_lines = consensus_inputs.get(market_key, {}).get(outcome_key, [])
